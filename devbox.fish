@@ -8,10 +8,16 @@
 #
 # Usage:
 #   devbox setup <name> [--image IMG]   one-time per name: create DNS domain `machine`
-#                                      (sudo, idempotent) + add a `Host <name>.machine`
-#                                      block to ~/.ssh/config (ForwardAgent yes).
-#   devbox build [--target T] [--tag T] copy ~/.ssh/id_ed25519.pub → ./authorized_keys,
-#                                      then `container build --target T -t T .`.
+#                                      (sudo, idempotent) + write a `Host <name>.machine`
+#                                      block to ~/.ssh/config.d/<name>.machine (ForwardAgent yes)
+#                                      and ensure ~/.ssh/config includes ~/.ssh/config.d/*.machine.
+#   devbox build [--target T] [--tag T] [--no-cache]
+#                                      copy ~/.ssh/id_ed25519.pub → ./authorized_keys,
+#                                      then `container build --target T -t T [--no-cache] .`.
+#                                      --no-cache forces a full rebuild, ignoring the
+#                                      layer cache (refreshes chezmoi dotfiles +
+#                                      every toolchain); the fresh layers are still
+#                                      written back to the cache.
 #   devbox create <name> [--image IMG]  `container machine create --home-mount=none
 #                                      --name <name> <IMG>` then start it.
 #                                      --home-mount=none is HARDCODED (safety boundary).
@@ -47,15 +53,15 @@ function _devbox_usage
     echo "Usage: devbox <subcommand> [name] [options...]"
     echo
     echo "Subcommands:"
-    echo "  setup <name> [--image IMG]   one-time: DNS domain + ~/.ssh/config Host block"
-    echo "  build [--target T] [--tag T] build the image (refreshes ./authorized_keys)"
+    echo "  build [--target T] [--tag T] [--no-cache]   build the image (refreshes ./authorized_keys;"
+    echo "                               --no-cache forces a full rebuild, ignoring layer cache)"
     echo "  create <name> [--image IMG]  create + start machine (--home-mount=none)"
     echo "  start <name>                 start a stopped machine"
     echo "  stop <name>                  stop a running machine"
     echo "  ssh <name>                   ssh <name>.<domain> (agent forwarded)"
     echo "  run <name> [args...]         passthrough to `container machine run -n <name>`"
-    echo "  status <name>                inspect a machine"
-    echo "  ls                           list all machines"
+    echo "  inspect <name>               inspect a machine"
+    echo "  list                         list all machines"
     echo "  destroy <name>               stop + delete (y/N confirm)"
     echo "  help                         this message"
 end
@@ -70,37 +76,43 @@ function _devbox_require_name --argument-names cmd
     return 0
 end
 
-# ── subcommands ─────────────────────────────────────────────────────────────
-
-function _devbox_setup
+function _setup_dns
     set -l name $argv[1]
-    _devbox_require_name setup $name; or return
     set -l host $name.$DEVBOX_DNS_DOMAIN
-
-    # 1. DNS domain (global; sudo; idempotent).
     if not contains $DEVBOX_DNS_DOMAIN (container system dns list -q 2>/dev/null)
         echo "Creating DNS domain '$DEVBOX_DNS_DOMAIN' (requires sudo)..."
         sudo container system dns create $DEVBOX_DNS_DOMAIN
         or return
-    else
-        echo "DNS domain '$DEVBOX_DNS_DOMAIN' already exists."
     end
-
-    # 2. ~/.ssh/config Host block (per name; idempotent — never rewrites existing).
-    set -l cfg $HOME/.ssh/config
-    if test -f $cfg; and grep -q -x -- "Host $host" $cfg
-        echo "SSH config already has 'Host $host'."
-    else
-        echo "Adding 'Host $host' block to $cfg..."
-        mkdir -p $HOME/.ssh
-        printf '\nHost %s\n  User %s\n  IdentityFile %s\n  ForwardAgent yes\n  UserKnownHostsFile /dev/null\n  StrictHostKeyChecking no\n' \
-            $host $DEVBOX_USER $DEVBOX_SSH_KEY >>$cfg
-    end
-    echo "Done. Next: devbox build && devbox create $name"
 end
 
+function _setup_ssh
+    set -l name $argv[1]
+    set -l host $name.$DEVBOX_DNS_DOMAIN
+    set -l cfgdir $HOME/.ssh/config.d
+    set -l cfgfile $cfgdir/$name.machine
+    mkdir -p $cfgdir
+    if not test -f $cfgfile
+        echo "Writing 'Host $host' block to $cfgfile..."
+        printf 'Host %s\n  User %s\n  IdentityFile %s\n  ForwardAgent yes\n  UserKnownHostsFile /dev/null\n  StrictHostKeyChecking no\n' \
+            $host $DEVBOX_USER $DEVBOX_SSH_KEY >$cfgfile
+    end
+end
+
+function _delete_ssh_config
+    set -l name $argv[1]
+    set -l cfgdir $HOME/.ssh/config.d
+    set -l cfgfile $cfgdir/$name.machine
+    if test -f $cfgfile
+        rm -f $cfgfile
+        echo "Removed $cfgfile"
+    end
+end
+
+
+# ── subcommands ─────────────────────────────────────────────────────────────
 function _devbox_build
-    argparse --name=devbox-build 't/target=' 'tag=' -- $argv
+    argparse --name=devbox-build 't/target=' 'tag=' 'no-cache' -- $argv
     or return
     set -l target (set -q _flag_target; and echo $_flag_target; or echo $DEVBOX_DEFAULT_TARGET)
     set -l tag (set -q _flag_tag; and echo $_flag_tag; or echo $DEVBOX_DEFAULT_IMAGE)
@@ -116,9 +128,16 @@ function _devbox_build
     cp $pubkey $_devbox_dir/authorized_keys
     or return
 
-    echo "Building target '$target' → tag '$tag'..."
+    set -l cache_note
+    set -l build_args --target $target -t $tag
+    if set -q _flag_no_cache
+        set -a build_args --no-cache
+        set cache_note " (no cache; rebuilds every layer)"
+    end
+
+    echo "Building target '$target' → tag '$tag'$cache_note..."
     cd $_devbox_dir
-    container build --target $target -t $tag .
+    container build $build_args .
 end
 
 function _devbox_create
@@ -126,6 +145,9 @@ function _devbox_create
     or return
     set -l name $argv[1]
     _devbox_require_name create $name; or return
+
+    _setup_dns $name
+    _setup_ssh $name
     set -l image (set -q _flag_image; and echo $_flag_image; or echo $DEVBOX_DEFAULT_IMAGE)
 
     echo "Creating machine '$name' from '$image' with --home-mount=none..."
@@ -172,8 +194,8 @@ function _devbox_status
     container machine inspect $name
 end
 
-function _devbox_ls
-    container machine ls
+function _devbox_list
+    container machine list
 end
 
 function _devbox_destroy
@@ -189,6 +211,8 @@ function _devbox_destroy
     end
     container machine stop $name 2>/dev/null # ignore error if not running
     container machine delete $name
+
+    _delete_ssh_config $name
 end
 
 # ── dispatch ────────────────────────────────────────────────────────────────
@@ -196,15 +220,14 @@ set -l cmd $argv[1]
 set -e argv[1]
 
 switch $cmd
-    case setup    ; _devbox_setup $argv
     case build    ; _devbox_build $argv
     case create   ; _devbox_create $argv
     case start    ; _devbox_start $argv
     case stop     ; _devbox_stop $argv
     case ssh      ; _devbox_ssh $argv
     case run      ; _devbox_run $argv
-    case status   ; _devbox_status $argv
-    case ls       ; _devbox_ls $argv
+    case inspect  ; _devbox_inspect $argv
+    case list     ; _devbox_list $argv
     case destroy  ; _devbox_destroy $argv
     case help -h --help '' ; _devbox_usage
     case '*'
