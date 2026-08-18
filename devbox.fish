@@ -1,50 +1,12 @@
 #!/usr/bin/env fish
 #
-# devbox.fish — manage Apple `container` development machines for container-play.
+# devbox.fish — manage Apple `container` development machines.
 #
-# All stateful subcommands take the machine NAME as their first argument, so you
-# can run several devboxes side by side. `build` and `ls` are global (they don't
-# act on a specific machine).
-#
-# Usage:
-#   devbox setup <name> [--image IMG]   one-time per name: create DNS domain `machine`
-#                                      (sudo, idempotent) + write a `Host <name>.machine`
-#                                      block to ~/.ssh/config.d/<name>.machine (ForwardAgent yes)
-#                                      and ensure ~/.ssh/config includes ~/.ssh/config.d/*.machine.
-#   devbox build [--target T] [--tag T] [--no-cache]
-#                                      copy ~/.ssh/id_ed25519.pub → ./authorized_keys,
-#                                      then `container build --target T -t T [--no-cache] .`.
-#                                      --no-cache forces a full rebuild, ignoring the
-#                                      layer cache (refreshes chezmoi dotfiles +
-#                                      every toolchain); the fresh layers are still
-#                                      written back to the cache.
-#   devbox create <name> [--image IMG]  `container machine create --home-mount=none
-#                                      --name <name> <IMG>` then start it.
-#                                      --home-mount=none is HARDCODED (safety boundary).
-#   devbox start <name>                 `container machine start <name>`
-#   devbox stop <name>                  `container machine stop <name>`
-#   devbox ssh <name>                   `ssh <name>.machine` (uses the ForwardAgent block)
-#   devbox run <name> [args...]         passthrough to `container machine run -n <name> [args]`
-#                                      e.g. `devbox run mybox -- ls -la`
-#                                           `devbox run mybox -e AWS_KEY=x -- aws s3 ls`
-#                                           `devbox run mybox`            (interactive shell)
-#   devbox status <name>                `container machine inspect <name>`
-#   devbox ls                           `container machine ls` (all machines)
-#   devbox destroy <name>               stop + delete <name>; prompts y/N
-#   devbox help                         this message
-#
-# Overridable defaults (env vars):
-#   DEVBOX_DEFAULT_IMAGE  (default: dev:latest)
-#   DEVBOX_DEFAULT_TARGET (default: dev)
-#   DEVBOX_DNS_DOMAIN     (default: machine)
-#   DEVBOX_SSH_KEY        (default: ~/.ssh/id_ed25519)
-#   DEVBOX_USER           (default: tcorbettclark)
-
 # ── defaults ────────────────────────────────────────────────────────────────
 set -g _devbox_dir (realpath (dirname (status --current-filename)))
-set -gx DEVBOX_DEFAULT_IMAGE  (set -q DEVBOX_DEFAULT_IMAGE;  and echo $DEVBOX_DEFAULT_IMAGE;  or echo dev:latest)
-set -gx DEVBOX_DEFAULT_TARGET (set -q DEVBOX_DEFAULT_TARGET; and echo $DEVBOX_DEFAULT_TARGET; or echo dev)
-set -gx DEVBOX_DNS_DOMAIN     (set -q DEVBOX_DNS_DOMAIN;     and echo $DEVBOX_DNS_DOMAIN;     or echo machine)
+set -gx DEVBOX_IMAGE          (set -q DEVBOX_IMAGE;          and echo $DEVBOX_IMAGE;          or echo dev:latest)
+set -gx DEVBOX_TARGET         (set -q DEVBOX_TARGET;         and echo $DEVBOX_TARGET;         or echo dev)
+set -gx DEVBOX_DNS_DOMAIN     (set -q DEVBOX_DNS_DOMAIN;     and echo $DEVBOX_DNS_DOMAIN;     or echo devbox)
 set -gx DEVBOX_SSH_KEY        (set -q DEVBOX_SSH_KEY;        and echo $DEVBOX_SSH_KEY;        or echo "$HOME/.ssh/id_ed25519")
 set -gx DEVBOX_USER           (set -q DEVBOX_USER;           and echo $DEVBOX_USER;           or echo tcorbettclark)
 
@@ -53,9 +15,9 @@ function _devbox_usage
     echo "Usage: devbox <subcommand> [name] [options...]"
     echo
     echo "Subcommands:"
-    echo "  build [--target T] [--tag T] [--no-cache]   build the image (refreshes ./authorized_keys;"
+    echo "  build [--no-cache]           build the image (refreshes ./authorized_keys;"
     echo "                               --no-cache forces a full rebuild, ignoring layer cache)"
-    echo "  create <name> [--image IMG]  create + start machine (--home-mount=none)"
+    echo "  create <name>                create + start machine (--home-mount=none)"
     echo "  start <name>                 start a stopped machine"
     echo "  stop <name>                  stop a running machine"
     echo "  ssh <name>                   ssh <name>.<domain> (agent forwarded)"
@@ -90,7 +52,7 @@ function _setup_ssh
     set -l name $argv[1]
     set -l host $name.$DEVBOX_DNS_DOMAIN
     set -l cfgdir $HOME/.ssh/config.d
-    set -l cfgfile $cfgdir/$name.machine
+    set -l cfgfile $cfgdir/$name.devbox
     mkdir -p $cfgdir
     if not test -f $cfgfile
         echo "Writing 'Host $host' block to $cfgfile..."
@@ -102,7 +64,7 @@ end
 function _delete_ssh_config
     set -l name $argv[1]
     set -l cfgdir $HOME/.ssh/config.d
-    set -l cfgfile $cfgdir/$name.machine
+    set -l cfgfile $cfgdir/$name.devbox
     if test -f $cfgfile
         rm -f $cfgfile
         echo "Removed $cfgfile"
@@ -112,10 +74,8 @@ end
 
 # ── subcommands ─────────────────────────────────────────────────────────────
 function _devbox_build
-    argparse --name=devbox-build 't/target=' 'tag=' 'no-cache' -- $argv
+    argparse --name=devbox-build 'no-cache' -- $argv
     or return
-    set -l target (set -q _flag_target; and echo $_flag_target; or echo $DEVBOX_DEFAULT_TARGET)
-    set -l tag (set -q _flag_tag; and echo $_flag_tag; or echo $DEVBOX_DEFAULT_IMAGE)
 
     set -l pubkey $DEVBOX_SSH_KEY.pub
     if not test -f $pubkey
@@ -129,32 +89,30 @@ function _devbox_build
     or return
 
     set -l cache_note
-    set -l build_args --target $target -t $tag
+    set -l build_args --target $DEVBOX_TARGET -t $DEVBOX_IMAGE
     if set -q _flag_no_cache
         set -a build_args --no-cache
         set cache_note " (no cache; rebuilds every layer)"
     end
 
-    echo "Building target '$target' → tag '$tag'$cache_note..."
+    echo "Building target '$DEVBOX_TARGET' → tag '$DEVBOX_IMAGE'$cache_note..."
     cd $_devbox_dir
     container build $build_args .
+    and echo "Build completed."
 end
 
 function _devbox_create
-    argparse --name=devbox-create 'i/image=' -- $argv
-    or return
     set -l name $argv[1]
     _devbox_require_name create $name; or return
 
     _setup_dns $name
     _setup_ssh $name
-    set -l image (set -q _flag_image; and echo $_flag_image; or echo $DEVBOX_DEFAULT_IMAGE)
 
-    echo "Creating machine '$name' from '$image' with --home-mount=none..."
+    echo "Creating machine '$name' from '$DEVBOX_IMAGE' with --home-mount=none..."
     # --home-mount=none is the safety boundary: never mount the host home dir.
     # `container machine create` boots the machine by default.
-    container machine create --home-mount=none --name $name $image
-    and echo "Machine '$name' is up. Connect with: devbox ssh $name"
+    container machine create --home-mount=none --name $name $DEVBOX_IMAGE
+    and echo "Machine '$name' is up."
 end
 
 function _devbox_start
@@ -170,6 +128,7 @@ function _devbox_stop
     set -l name $argv[1]
     _devbox_require_name stop $name; or return
     container machine stop $name
+    and echo "Machine '$name' stopped."
 end
 
 function _devbox_ssh
@@ -188,9 +147,9 @@ function _devbox_run
     container machine run -n $name $argv
 end
 
-function _devbox_status
+function _devbox_inspect
     set -l name $argv[1]
-    _devbox_require_name status $name; or return
+    _devbox_require_name inspect $name; or return
     container machine inspect $name
 end
 
