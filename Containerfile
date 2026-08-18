@@ -5,10 +5,13 @@
 #
 # Named targets for organisation:
 #
-#   base        debian-slim + systemd + apt tooling + fish + sshd + user
-#   python      base + uv (uv also provides the Python interpreter)
-#   typescript  base + fnm/node/npm + bun
-#   dev         python + typescript  <-- the image you actually run
+#   base                            debian-slim + systemd + apt tooling + fish + sshd + user
+#   base_and_python                 base + uv (uv also provides the Python interpreter)
+#   base_and_python_and_typescript  … + fnm/node/npm + bun
+#   dev                             base_and_python_and_typescript  <-- the image you actually run
+#
+# Targets are a linear chain (each FROMs the previous), used only to structure
+# the file. `dev` is an empty-body alias over the final toolchain stage.
 #
 # Build:
 #   cp ~/.ssh/id_ed25519.pub ./authorized_keys     # your PUBLIC key (not secret)
@@ -89,11 +92,16 @@ RUN printf '[user]\n\tname = Timothy Corbett-Clark\n\temail = timothy@corbettcla
         > /home/tcorbettclark/.gitconfig && \
     chown tcorbettclark:tcorbettclark /home/tcorbettclark/.gitconfig
 
-# fish config: user-local PATHs + starship prompt.
-RUN mkdir -p /home/tcorbettclark/.config/fish && \
-    printf 'fish_add_path -g ~/.local/bin ~/.bun/bin ~/.fnm\nstarship init fish | source\n' \
-        > /home/tcorbettclark/.config/fish/config.fish && \
-    chown -R tcorbettclark:tcorbettclark /home/tcorbettclark/.config
+# Dotfiles (fish config + functions, ghostty, zed) are managed by chezmoi from
+# github.com/tcorbettclark/dotfiles. chezmoi isn't in Debian stable (only sid),
+# so use the official installer instead of adding sid sources. It drops the
+# binary in ~/.local/bin (already on PATH) and runs `init --apply` in one shot.
+# The repo is PUBLIC, so the HTTPS clone works at build time without the
+# forwarded SSH agent. Re-init over SSH post-boot if you want `chezmoi update`
+# to use the agent (git@github.com:tcorbettclark/dotfiles.git).
+USER tcorbettclark
+RUN sh -c "$(curl -fsLS https://get.chezmoi.io)" -- -b "$HOME/.local/bin" init --apply tcorbettclark/dotfiles
+USER root
 
 # Authorize the host's SSH key to log in to the machine. This is the PUBLIC
 # key only (not secret), dropped into the build context as ./authorized_keys
@@ -106,9 +114,12 @@ RUN chmod 700 /home/tcorbettclark/.ssh && \
 # repair them idempotently (cp -an, no clobber) if the machine re-provisions
 # the user on first boot. Toolchain dirs (~/.local, ~/.fnm, ~/.bun) are NOT
 # staged — they're already baked into /home/tcorbettclark.
-RUN mkdir -p /etc/skel-dev/.ssh /etc/skel-dev/.config/fish && \
+# NOTE: dotfiles (~/.config/fish, ~/.config/zed, ~/.config/ghostty) are NOT
+# staged here — chezmoi owns them and applied them at build time for the baked
+# user. Only the non-dotfile configs (git identity, ssh pubkey) are staged as a
+# repair fallback for /etc/machine/create-user.sh.
+RUN mkdir -p /etc/skel-dev/.ssh && \
     cp /home/tcorbettclark/.gitconfig /etc/skel-dev/.gitconfig && \
-    cp /home/tcorbettclark/.config/fish/config.fish /etc/skel-dev/.config/fish/config.fish && \
     cp /home/tcorbettclark/.ssh/authorized_keys /etc/skel-dev/.ssh/authorized_keys
 
 # /etc/machine/create-user.sh: Apple runs this once, as root, on first boot,
@@ -128,8 +139,10 @@ RUN mkdir -p /etc/machine && \
     '  useradd -u "${CONTAINER_UID:-1000}" -g "$USER_" -M -d "${CONTAINER_HOME:-/home/$USER_}" -s /usr/bin/fish "$USER_"' \
     'fi' \
     'HOME_="$(getent passwd "$USER_" | cut -d: -f6)"' \
-    'mkdir -p "$HOME_/.ssh" "$HOME_/.config/fish"' \
-    '# Fill in any missing configs from the staged skel (do not overwrite).' \
+    'mkdir -p "$HOME_/.ssh"' \
+    '# Fill in any missing non-dotfile configs from the staged skel (do not' \
+    '# overwrite). Dotfiles (~/.config/fish, ~/.config/zed, …) are managed by' \
+    '# chezmoi and were applied at build time for the baked user — not staged.' \
     'cp -an /etc/skel-dev/. "$HOME_"/ 2>/dev/null || true' \
     'chmod 700 "$HOME_/.ssh"' \
     'chmod 600 "$HOME_/.ssh/authorized_keys" 2>/dev/null || true' \
@@ -154,8 +167,8 @@ RUN mkdir -p /etc/ssh/sshd_config.d && \
 # Default boot is systemd; nothing else to CMD.
 CMD ["/sbin/init"]
 
-# ── python ───────────────────────────────────────────────────────────────────
-FROM base AS python
+# ── base_and_python ──────────────────────────────────────────────────────────
+FROM base AS base_and_python
 
 USER tcorbettclark
 WORKDIR /home/tcorbettclark
@@ -164,8 +177,8 @@ WORKDIR /home/tcorbettclark
 # No apt python3; uv fetches whatever Python a project needs.
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# ── typescript ───────────────────────────────────────────────────────────────
-FROM base AS typescript
+# ── base_and_python_and_typescript ───────────────────────────────────────────
+FROM base_and_python AS base_and_python_and_typescript
 
 USER tcorbettclark
 WORKDIR /home/tcorbettclark
@@ -188,21 +201,7 @@ RUN mkdir -p ~/.fnm ~/.local/bin && \
     curl -fsSL https://bun.sh/install | bash
 
 # ── dev (the image you run) ──────────────────────────────────────────────────
-# base + python toolchain + typescript toolchain.
-FROM python AS dev
-
-USER tcorbettclark
-WORKDIR /home/tcorbettclark
-
-RUN mkdir -p ~/.fnm ~/.local/bin && \
-    curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell && \
-    ~/.fnm/fnm install --lts && \
-    ~/.fnm/fnm default "$(~/.fnm/fnm ls | tail -1 | tr -dc '0-9.')" && \
-    # Symlink node/npm/npx/corepack into ~/.local/bin (already on PATH) so they
-    # resolve regardless of fnm's alias directory layout.
-    NODE_BIN=$(ls -d $HOME/.fnm/node-versions/*/installation/bin | head -1) && \
-    ln -sf "$NODE_BIN/node"     ~/.local/bin/node && \
-    ln -sf "$NODE_BIN/npm"      ~/.local/bin/npm && \
-    ln -sf "$NODE_BIN/npx"      ~/.local/bin/npx && \
-    ln -sf "$NODE_BIN/corepack" ~/.local/bin/corepack && \
-    curl -fsSL https://bun.sh/install | bash
+# Empty-body alias: everything (base + python + typescript) is inherited. Named
+# `dev` so `container build --target dev -t dev:latest .` produces the runnable
+# image. CMD ["/sbin/init"] is inherited from `base`.
+FROM base_and_python_and_typescript AS dev
