@@ -7,7 +7,7 @@
 #
 #   base                            debian-slim + systemd + apt tooling + fish + sshd + user
 #   base_and_python                 base + uv (uv also provides the Python interpreter)
-#   base_and_python_and_typescript  … + fnm/node/npm + bun
+#   base_and_python_and_typescript  … + node/npm + bun
 #   dev                             base_and_python_and_typescript  <-- the image you actually run
 #
 # Targets are a linear chain (each FROMs the previous), used only to structure
@@ -43,8 +43,7 @@ ENV container=container
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 # User-local bins on PATH for non-fish contexts and for RUN steps below.
-ENV FNM_DIR=/home/tcorbettclark/.fnm
-ENV PATH=/home/tcorbettclark/.local/bin:/home/tcorbettclark/.bun/bin:/home/tcorbettclark/.fnm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV PATH=/home/tcorbettclark/.local/bin:/home/tcorbettclark/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # System packages: systemd + ssh + fish + apt-available CLI tools.
 # starship is installed below from its official installer (Debian lags on it).
@@ -79,7 +78,7 @@ RUN systemctl set-default multi-user.target && \
       console-getty.service
 
 # Non-root user: tcorbettclark (UID 1000), fish login shell, passwordless sudo.
-# Toolchains (uv/fnm/bun) install into this home during build, so the user must
+# Toolchains (uv/bun) install into this home during build, so the user must
 # exist here. /etc/machine/create-user.sh (below) keeps this setup intact across
 # the machine's first-boot provisioning.
 RUN useradd -m -u 1000 -s /usr/bin/fish tcorbettclark && \
@@ -112,7 +111,7 @@ RUN chmod 700 /home/tcorbettclark/.ssh && \
 
 # Stage the same configs under /etc/skel-dev so /etc/machine/create-user.sh can
 # repair them idempotently (cp -an, no clobber) if the machine re-provisions
-# the user on first boot. Toolchain dirs (~/.local, ~/.fnm, ~/.bun) are NOT
+# the user on first boot. Toolchain dirs (~/.local, ~/.bun) are NOT
 # staged — they're already baked into /home/tcorbettclark.
 # NOTE: dotfiles (~/.config/fish, ~/.config/zed, ~/.config/ghostty) are NOT
 # staged here — chezmoi owns them and applied them at build time for the baked
@@ -158,8 +157,8 @@ RUN curl -sS https://starship.rs/install.sh | sh -s -- -y
 
 # sshd: pubkey-only, no root, key file in the usual place.
 RUN mkdir -p /etc/ssh/sshd_config.d && \
-    printf 'PermitRootLogin no\nPubkeyAuthentication yes\nPasswordAuthentication no\nAuthorizedKeysFile .ssh/authorized_keys\n' \
-        > /etc/ssh/sshd_config.d/99-dev.conf && \
+    printf 'PermitRootLogin no\nPubkeyAuthentication yes\nPasswordAuthentication no\nAuthorizedKeysFile .ssh/authorized_keys\nAcceptEnv PI_OLLAMA_KEY\n' \
+        > /etc/ssh/sshd_config.d/devbox.conf && \
     mkdir -p /run/sshd && \
     systemctl disable ssh.socket 2>/dev/null || true ; \
     systemctl enable ssh.service
@@ -183,21 +182,18 @@ FROM base_and_python AS base_and_python_and_typescript
 USER tcorbettclark
 WORKDIR /home/tcorbettclark
 
-# fnm manages Node (gives us `node` + `npm`); bun is the other JS runtime/pkgmgr.
-# Pipe to bash (not sh): the fnm installer uses [[ ]], which dash lacks.
-# Pre-create ~/.fnm so the installer targets it (otherwise it uses
-# ~/.local/share/fnm and our PATH/FNM_DIR assumptions break).
-RUN mkdir -p ~/.fnm ~/.local/bin && \
-    curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell && \
-    ~/.fnm/fnm install --lts && \
-    ~/.fnm/fnm default "$(~/.fnm/fnm ls | tail -1 | tr -dc '0-9.')" && \
-    # Symlink node/npm/npx/corepack into ~/.local/bin (already on PATH) so they
-    # resolve regardless of fnm's alias directory layout.
-    NODE_BIN=$(ls -d $HOME/.fnm/node-versions/*/installation/bin | head -1) && \
-    ln -sf "$NODE_BIN/node"     ~/.local/bin/node && \
-    ln -sf "$NODE_BIN/npm"      ~/.local/bin/npm && \
-    ln -sf "$NODE_BIN/npx"      ~/.local/bin/npx && \
-    ln -sf "$NODE_BIN/corepack" ~/.local/bin/corepack && \
+# One Node (latest LTS), installed straight into ~/.local so bin/node,
+# bin/npm, bin/npx, bin/corepack land on PATH and npm's global prefix is
+# ~/.local (so `npm i -g <foo>` puts its shim in ~/.local/bin — already PATH).
+# arm64 matches Apple Silicon. No fnm/nvm: we want exactly one Node; rebuild
+# the image to change it. jq (from base) picks the newest LTS from the dist
+# index — same source nvm/fnm themselves use.
+RUN mkdir -p ~/.local && \
+    NODE_VERSION=$(curl -fsSL https://nodejs.org/dist/index.json \
+        | jq -r 'map(select(.lts != false)) | sort_by(.date) | last | .version') && \
+    curl -fsSL "https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-linux-arm64.tar.xz" \
+        | tar -xJ -C ~/.local --strip-components=1 && \
+    node --version && npm --version && \
     curl -fsSL https://bun.sh/install | bash
 
 # ── dev (the image you run) ──────────────────────────────────────────────────
