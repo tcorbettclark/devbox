@@ -6,7 +6,7 @@
 set -g _devbox_dir (realpath (dirname (status --current-filename)))
 set -gx DEVBOX_IMAGE          (set -q DEVBOX_IMAGE;          and echo $DEVBOX_IMAGE;          or echo dev:latest)
 set -gx DEVBOX_TARGET         (set -q DEVBOX_TARGET;         and echo $DEVBOX_TARGET;         or echo dev)
-set -gx DEVBOX_DNS_DOMAIN     (set -q DEVBOX_DNS_DOMAIN;     and echo $DEVBOX_DNS_DOMAIN;     or echo devbox)
+set -gx DEVBOX_DNS_DOMAIN     (set -q DEVBOX_DNS_DOMAIN;     and echo $DEVBOX_DNS_DOMAIN;     or echo machine)
 set -gx DEVBOX_SSH_KEY        (set -q DEVBOX_SSH_KEY;        and echo $DEVBOX_SSH_KEY;        or echo "$HOME/.ssh/id_ed25519")
 set -gx DEVBOX_USER           (set -q DEVBOX_USER;           and echo $DEVBOX_USER;           or echo tcorbettclark)
 
@@ -52,7 +52,7 @@ function _setup_ssh
     set -l name $argv[1]
     set -l host $name.$DEVBOX_DNS_DOMAIN
     set -l cfgdir $HOME/.ssh/config.d
-    set -l cfgfile $cfgdir/$name.devbox
+    set -l cfgfile $cfgdir/$name.machine
     mkdir -p $cfgdir
     if not test -f $cfgfile
         echo "Writing 'Host $host' block to $cfgfile..."
@@ -64,7 +64,7 @@ end
 function _delete_ssh_config
     set -l name $argv[1]
     set -l cfgdir $HOME/.ssh/config.d
-    set -l cfgfile $cfgdir/$name.devbox
+    set -l cfgfile $cfgdir/$name.machine
     if test -f $cfgfile
         rm -f $cfgfile
         echo "Removed $cfgfile"
