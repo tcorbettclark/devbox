@@ -5,15 +5,17 @@
 #
 # Named targets for organisation:
 #
-#   base                            debian-slim + systemd + apt tooling + fish + sshd + user
-#   base_and_python                 base + uv (uv also provides the Python interpreter)
-#   base_and_python_and_typescript  … + node/npm + bun
-#   dev                             base_and_python_and_typescript  <-- the image you actually run
+#   base                                    debian-slim + systemd + apt tooling + fish + sshd + user
+#   base_and_python                         base + uv (uv also provides the Python interpreter)
+#   base_and_python_and_typescript          … + node/npm + bun
+#   base_and_python_and_typescript_and_pi   … + pi coding agent
+#   dev                                     base_and_python_and_typescript_and_pi  <-- the image you actually run
 #
 # Targets are a linear chain (each FROMs the previous), used only to structure
 # the file. `dev` is an empty-body alias over the final toolchain stage.
 #
 # Build:
+# 
 #   cp ~/.ssh/id_ed25519.pub ./authorized_keys     # your PUBLIC key (not secret)
 #   container build --target dev -t dev:latest .
 #
@@ -196,8 +198,19 @@ RUN mkdir -p ~/.local && \
     node --version && npm --version && \
     curl -fsSL https://bun.sh/install | bash
 
+# ── base_and_python_and_typescript_and_pi ──────────────────────────────────
+FROM base_and_python_and_typescript AS base_and_python_and_typescript_and_pi
+
+USER tcorbettclark
+WORKDIR /home/tcorbettclark
+
+# pi (the coding agent). Installed globally via npm; its prefix is ~/.local
+# (set up in the typescript stage), so `pi` lands in ~/.local/bin (already on
+# PATH).
+RUN npm install -g @earendil-works/pi-coding-agent && pi --version
+
 # ── dev (the image you run) ──────────────────────────────────────────────────
-# Empty-body alias: everything (base + python + typescript) is inherited. Named
-# `dev` so `container build --target dev -t dev:latest .` produces the runnable
-# image. CMD ["/sbin/init"] is inherited from `base`.
-FROM base_and_python_and_typescript AS dev
+# Empty-body alias: everything (base + python + typescript + pi) is inherited.
+# Named `dev` so `container build --target dev -t dev:latest .` produces the
+# runnable image. CMD ["/sbin/init"] is inherited from `base`.
+FROM base_and_python_and_typescript_and_pi AS dev
