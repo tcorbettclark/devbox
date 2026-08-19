@@ -13,22 +13,20 @@ machines, and SSH into them — all through a small `devbox` helper script.
   - **Node.js** latest LTS with **npm**/**npx**/**corepack** (installed to `~/.local`,
     npm global prefix `~/.local`)
   - **bun** (JS/TS; installs to `~/.bun/bin`)
-- `pi` coding agent installed globally via npm
+- `pi` coding agent installed globally via npm, with API key passed in over ssh.
 - SSH access keyed off your public key in `./authorized_keys`
+- Chezmoi dotfiles installed from github
 
 ## Quick start
 
 ```sh
-# 1. Provide your public SSH key (only the public key, never the secret)
-cp ~/.ssh/id_ed25519.pub ./authorized_keys
-
-# 2. Build the image
+# 1. Build the image (one time)
 ./devbox build
 
-# 3. Create + start a machine
+# 2. Create + start a machine
 ./devbox create devbox1
 
-# 4. SSH in (agent forwarded, host resolves via <name>.machine DNS)
+# 3. SSH in (agent forwarded, host resolves via <name>.machine DNS)
 ./devbox ssh devbox1
 ```
 
@@ -43,7 +41,7 @@ Subcommands:
   create <name>                create + start machine (--home-mount=none)
   start <name>                 start a stopped machine
   stop <name>                  stop a running machine
-  ssh <name>                   ssh <name>.<domain> (agent forwarded)
+  ssh <name>                   ssh <name>.machine (agent forwarded)
   run <name> [args...]         passthrough to `container machine run -n <name>`
   inspect <name>               inspect a machine
   list                         list all machines
@@ -56,8 +54,8 @@ Subcommands:
 - macOS with Apple Containers (`container` CLI / Container framework)
 - An SSH keypair; the public key goes in `./authorized_keys` (refreshed by `devbox build`)
 - A git identity (`user.name` / `user.email`); `devbox build` reads it from your
-  git config and bakes it into the image, along with your username and dotfiles
-  repo (`$USER/dotfiles`)
+  git config and bakes it into the image
+- A chezmoi dotfiles repo (`$USER/dotfiles`) on github.
 
 ## License
 
