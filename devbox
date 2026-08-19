@@ -8,6 +8,12 @@ set -g DEVBOX_DNS_DOMAIN     machine
 set -g DEVBOX_SSH_KEY        "$HOME/.ssh/id_ed25519"
 set -g DEVBOX_USER           $USER
 set -g DEVBOX_DOTFILES_REPO  $USER/dotfiles
+# Per-machine VM resources. Defaults mirror a small DigitalOcean droplet
+# (2G RAM, 2 vCPUs) so memory/CPU pressure surfaces locally before it bites
+# in production. The platform default is ~half the host (e.g. 16G, 5 cpus
+# here), which both wastes RAM and hides real-world constraints.
+set -g DEVBOX_MEMORY         2G
+set -g DEVBOX_CPUS           2
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 function _devbox_usage
@@ -16,7 +22,7 @@ function _devbox_usage
     echo "Subcommands:"
     echo "  build [--no-cache]           build the image (refreshes ./authorized_keys;"
     echo "                               --no-cache forces a full rebuild, ignoring layer cache)"
-    echo "  create <name>                create + start machine (--home-mount=none)"
+    echo "  create <name>                create + start machine (memory=$DEVBOX_MEMORY, cpus=$DEVBOX_CPUS, --home-mount=none)"
     echo "  start <name>                 start a stopped machine"
     echo "  stop <name>                  stop a running machine"
     echo "  ssh <name>                   ssh <name>.<domain> (agent forwarded)"
@@ -143,10 +149,10 @@ function _devbox_create
     _setup_dns $name
     _create_ssh_config $name
 
-    echo "Creating machine '$name' from '$DEVBOX_IMAGE' with --home-mount=none..."
+    echo "Creating machine '$name' from '$DEVBOX_IMAGE' (memory=$DEVBOX_MEMORY, cpus=$DEVBOX_CPUS, home-mount=none)..."
     # --home-mount=none is the safety boundary: never mount the host home dir.
     # `container machine create` boots the machine by default.
-    container machine create --home-mount=none --name $name $DEVBOX_IMAGE >/dev/null
+    container machine create --home-mount=none --memory $DEVBOX_MEMORY --cpus $DEVBOX_CPUS --name $name $DEVBOX_IMAGE >/dev/null
     and echo "Machine '$name' is up."
 end
 
