@@ -105,47 +105,24 @@ COPY --chown=${USER_NAME}:${USER_NAME} ./authorized_keys ${HOME_DIR}/.ssh/author
 RUN chmod 700 ${HOME_DIR}/.ssh && \
     chmod 600 ${HOME_DIR}/.ssh/authorized_keys
 
-# Stage the same configs under /etc/skel-dev so /etc/machine/create-user.sh can
-# repair them idempotently (cp -an, no clobber) if the machine re-provisions
-# the user on first boot. Toolchain dirs (~/.local, ~/.bun) are NOT staged —
-# they're already baked into the image.
-# NOTE: dotfiles (~/.config/fish, ~/.config/zed, ~/.config/ghostty) are NOT
-# staged here — chezmoi owns them and applied them at build time for the baked
-# user. Only the non-dotfile configs (git identity, ssh pubkey) are staged as a
-# repair fallback for /etc/machine/create-user.sh.
-RUN mkdir -p /etc/skel-dev/.ssh && \
-    cp ${HOME_DIR}/.gitconfig /etc/skel-dev/.gitconfig && \
-    cp ${HOME_DIR}/.ssh/authorized_keys /etc/skel-dev/.ssh/authorized_keys
-
-# /etc/machine/create-user.sh: Apple runs this once, as root, on first boot,
-# with CONTAINER_USER/UID/GID/HOME/MACHINE_ID set. Replaces the built-in user
-# provisioning. Idempotent: if the baked user already exists, just ensure the
-# configs are present (no clobber) and ownership is correct.
+# /etc/machine/create-user.sh: Apple runs this once, as root, on first boot
+# (CONTAINER_USER/UID/GID/HOME set). Its mere presence suppresses Apple's
+# built-in default, which would re-create the user under the host UID and
+# clobber/re-chown the baked home. With a single build==create user and
+# --home-mount=none, the baked user/home/configs persist, so nothing needs
+# provisioning — just keep sudo + no-password intact.
 RUN mkdir -p /etc/machine && \
     DEFAULT_USER="${USER_NAME}" && \
     printf '%s\n' \
     '#!/bin/sh' \
     'set -eu' \
     "USER_=\"\${CONTAINER_USER:-$DEFAULT_USER}\"" \
-    '# User + home + toolchains are baked into the image. If the machine' \
-    '# provisioned a different UID, keep the baked user as-is (home-mount is' \
-    '# none, so UID matching the host is irrelevant).' \
-    'if ! id -u "$USER_" >/dev/null 2>&1; then' \
-    '  groupadd -g "${CONTAINER_GID:-1000}" "$USER_"' \
-    '  useradd -u "${CONTAINER_UID:-1000}" -g "$USER_" -M -d "${CONTAINER_HOME:-/home/$USER_}" -s /usr/bin/fish "$USER_"' \
-    'fi' \
-    'HOME_="$(getent passwd "$USER_" | cut -d: -f6)"' \
-    'mkdir -p "$HOME_/.ssh"' \
-    '# Fill in any missing non-dotfile configs from the staged skel (do not' \
-    '# overwrite). Dotfiles (~/.config/fish, ~/.config/zed, …) are managed by' \
-    '# chezmoi and were applied at build time for the baked user — not staged.' \
-    'cp -an /etc/skel-dev/. "$HOME_"/ 2>/dev/null || true' \
-    'chmod 700 "$HOME_/.ssh"' \
-    'chmod 600 "$HOME_/.ssh/authorized_keys" 2>/dev/null || true' \
-    'chown -R "$USER_:$USER_" "$HOME_"' \
-    'passwd -d "$USER_" 2>/dev/null || true' \
+    '# User, home, toolchains, and configs are baked at build time and persist' \
+    '# (home-mount=none). This script only suppresses the built-in default,' \
+    '# which would re-create the user under the host UID and clobber the home.' \
     'echo "$USER_ ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/"$USER_"' \
     'chmod 0440 /etc/sudoers.d/"$USER_"' \
+    'passwd -d "$USER_" 2>/dev/null || true' \
     > /etc/machine/create-user.sh && \
     chmod 0755 /etc/machine/create-user.sh
 
