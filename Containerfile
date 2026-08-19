@@ -39,7 +39,9 @@ ENV container=container
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 # User-local bins on PATH for non-fish contexts and for RUN steps below.
-ENV PATH=${HOME_DIR}/.local/bin:${HOME_DIR}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Homebrew for Linux installs to /home/linuxbrew/.linuxbrew.
+ENV BREW_PREFIX=/home/linuxbrew/.linuxbrew
+ENV PATH=${BREW_PREFIX}/bin:${HOME_DIR}/.local/bin:${HOME_DIR}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # System packages: systemd + ssh + fish + apt-available CLI tools.
 # starship is installed below from its official installer (Debian lags on it).
@@ -50,7 +52,7 @@ RUN apt-get update && \
         fish \
         git gh jq ripgrep fd-find fzf \
         curl ca-certificates \
-        sqlite3 gettext \
+        sqlite3 gettext libnss3-tools \
         bat eza tidy \
         build-essential pkg-config \
         less file unzip tar gzip bzip2 xz-utils \
@@ -128,6 +130,18 @@ passwd -d "$USER_NAME" 2>/dev/null || true
 INNER
 chmod 0755 /etc/machine/create-user.sh
 OUTER
+
+# Homebrew for Linux (needed for packages Debian lags on, e.g. mkcert).
+# Installs to /home/linuxbrew/.linuxbrew (already on PATH via BREW_PREFIX).
+USER ${USER_NAME}
+RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+USER root
+
+# mkcert: locally-trusted dev certs. libnss3-tools (certutil) was installed
+# via apt above so mkcert can install its root CA into the NSS store.
+USER ${USER_NAME}
+RUN brew install mkcert && mkcert -install
+USER root
 
 # starship prompt (system-wide binary; fish sources it via config.fish).
 RUN curl -sS https://starship.rs/install.sh | sh -s -- -y
