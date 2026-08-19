@@ -1,43 +1,16 @@
 #syntax=docker/dockerfile:1
 #
-# Dev-container MACHINE image for Apple Silicon, built with `container build`
-# and run as a long-lived `container machine` (systemd is PID 1).
-#
-# Named targets for organisation:
-#
-#   base                                    debian-slim + systemd + apt tooling + fish + sshd + user
-#   base_and_python                         base + uv (uv also provides the Python interpreter)
-#   base_and_python_and_typescript          … + node/npm + bun
-#   base_and_python_and_typescript_and_pi   … + pi coding agent
-#   dev                                     base_and_python_and_typescript_and_pi  <-- the image you actually run
-#
-# Targets are a linear chain (each FROMs the previous), used only to structure
-# the file. `dev` is an empty-body alias over the final toolchain stage.
-#
 # Build:
-# 
 #   cp ~/.ssh/id_ed25519.pub ./authorized_keys     # your PUBLIC key (not secret)
-#   container build --target dev -t dev:latest .
+#   container build --target devbox -t devbox:latest .
 #
-# Create + run a machine (NO host home mount — safety boundary):
-#   sudo container system dns create machine        # once; enables <name>.machine
-#   container machine create --home-mount=none --name devbox dev:latest
-#   container machine start devbox
+# Create + run a machine:
+#   sudo container system dns create machine       # once; enables <name>.machine
+#   container machine create --home-mount=none --name devbox1 devbox:latest
 #
-# Connect (SSH + forwarded agent → git to GitHub uses your host keys):
-#   ssh devbox.machine        # see ~/.ssh/config entry in README.md
-#   # or point Zed's SSH remote dev at `devbox.machine`
+# Connect
+#   ssh devbox1.machine
 #
-# Auth model:
-#   * Logging IN to the machine: your public key, baked into the image at
-#     /home/tcorbettclark/.ssh/authorized_keys (and staged under
-#     /etc/skel-dev for /etc/machine/create-user.sh to repair if needed).
-#   * Logging OUT to GitHub from inside the machine: SSH agent forwarding
-#     (ForwardAgent yes in the host's ~/.ssh/config). No token, no secret
-#     in the image. `gh` is installed but not auto-authenticated.
-#   * No host filesystem is mounted (--home-mount=none); code enters via
-#     `git clone` and leaves via `git push`.
-
 # ── base ─────────────────────────────────────────────────────────────────────
 FROM debian:stable-slim AS base
 
@@ -168,8 +141,8 @@ RUN mkdir -p /etc/ssh/sshd_config.d && \
 # Default boot is systemd; nothing else to CMD.
 CMD ["/sbin/init"]
 
-# ── base_and_python ──────────────────────────────────────────────────────────
-FROM base AS base_and_python
+# ── programming ──────────────────────────────────────────────────────────
+FROM base AS programming
 
 USER tcorbettclark
 WORKDIR /home/tcorbettclark
@@ -177,12 +150,6 @@ WORKDIR /home/tcorbettclark
 # uv installs to ~/.local/bin and manages its own Python interpreters.
 # No apt python3; uv fetches whatever Python a project needs.
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# ── base_and_python_and_typescript ───────────────────────────────────────────
-FROM base_and_python AS base_and_python_and_typescript
-
-USER tcorbettclark
-WORKDIR /home/tcorbettclark
 
 # One Node (latest LTS), installed straight into ~/.local so bin/node,
 # bin/npm, bin/npx, bin/corepack land on PATH and npm's global prefix is
@@ -198,8 +165,8 @@ RUN mkdir -p ~/.local && \
     node --version && npm --version && \
     curl -fsSL https://bun.sh/install | bash
 
-# ── base_and_python_and_typescript_and_pi ──────────────────────────────────
-FROM base_and_python_and_typescript AS base_and_python_and_typescript_and_pi
+# ── llm ──────────────────────────────────
+FROM programming AS llm
 
 USER tcorbettclark
 WORKDIR /home/tcorbettclark
@@ -209,8 +176,6 @@ WORKDIR /home/tcorbettclark
 # PATH).
 RUN npm install -g @earendil-works/pi-coding-agent && pi --version
 
-# ── dev (the image you run) ──────────────────────────────────────────────────
-# Empty-body alias: everything (base + python + typescript + pi) is inherited.
-# Named `dev` so `container build --target dev -t dev:latest .` produces the
-# runnable image. CMD ["/sbin/init"] is inherited from `base`.
-FROM base_and_python_and_typescript_and_pi AS dev
+# ── dev ──────────────────────────────────────────────────
+# Empty-body alias, so 'dev' is always the final complete target.
+FROM llm AS devbox
