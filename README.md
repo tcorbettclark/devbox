@@ -7,15 +7,16 @@ machines, and SSH into them — all through a small `devbox` helper script.
 
 - **Debian stable-slim** base with **systemd** as PID 1
 - **fish** login shell, **starship** prompt, **passwordless sudo**
+- SSH access keyed off your public key in `./authorized_keys`
+- host mkcert root CA trusted by the machine's NSS store, so mkcert certificates are trusted by the host's Keychain
 - CLI tooling: `git`, `gh`, `ripgrep`, `fd`, `fzf`, `jq`, `bat`, `eza`, `sqlite3`
+- Chezmoi dotfiles installed from repo on github
 - Language toolchains:
   - **uv** (Python; installs to `~/.local/bin`)
   - **Node.js** latest LTS with **npm**/**npx**/**corepack** (installed to `~/.local`,
     npm global prefix `~/.local`)
   - **bun** (JS/TS; installs to `~/.bun/bin`)
-- `pi` coding agent installed globally via npm, with API key passed in over ssh.
-- SSH access keyed off your public key in `./authorized_keys`
-- Chezmoi dotfiles installed from github
+- `pi` coding agent installed via npm, with OLLAMA API key passed in over ssh.
 
 ## Quick start
 

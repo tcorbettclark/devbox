@@ -97,6 +97,24 @@ function _devbox_build
     cp $pubkey $_devbox_dir/authorized_keys
     or return
 
+    # Seed the build context with the host's mkcert root CA so the image
+    # trusts (and signs with) the same CA the host's Keychain already trusts.
+    # `mkcert -install` must have been run on the host first (it creates the CA
+    # and installs it into the Keychain). The CA *key* is secret, so the build
+    # context dir is gitignored.
+    set -l ca_root (mkcert -CAROOT 2>/dev/null)
+    set -l ca_dir $_devbox_dir/mkcert-ca
+    if test -z "$ca_root" -o ! -f "$ca_root/rootCA.pem" -o ! -f "$ca_root/rootCA-key.pem"
+        echo "Error: host mkcert root CA not found." >&2
+        echo "Run on the host (one time): brew install mkcert && mkcert -install" >&2
+        return 1
+    end
+    echo "Copying host mkcert CA ($ca_root) → $ca_dir"
+    rm -rf $ca_dir
+    mkdir -p $ca_dir
+    cp "$ca_root/rootCA.pem" "$ca_root/rootCA-key.pem" $ca_dir/
+    or return
+
     set -l cache_note
     set -l build_args --target $DEVBOX_TARGET -t $DEVBOX_IMAGE
     if set -q _flag_no_cache

@@ -137,10 +137,24 @@ USER ${USER_NAME}
 RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 USER root
 
-# mkcert: locally-trusted dev certs. libnss3-tools (certutil) was installed
-# via apt above so mkcert can install its root CA into the NSS store.
+# mkcert: locally-trusted dev certs. The root CA is copied from the host's
+# mkcert CAROOT into the build context (./mkcert-ca/) by `devbox build`, so
+# certs minted inside the machine are trusted by the host's Keychain — the
+# host ran `mkcert -install` once and trusts this same CA. libnss3-tools
+# (certutil) was installed via apt above so mkcert can install the root CA
+# into the machine's NSS store.
 USER ${USER_NAME}
-RUN brew install mkcert && mkcert -install
+RUN brew install mkcert
+USER root
+
+# Seed the machine's mkcert CAROOT with the host's root CA. Because the files
+# already exist, `mkcert -install` below loads them instead of generating a
+# new CA — so the machine trusts (and signs with) the host's CA.
+COPY --chown=${USER_NAME}:${USER_NAME} ./mkcert-ca/rootCA.pem ./mkcert-ca/rootCA-key.pem ${HOME_DIR}/.local/share/mkcert/
+RUN chmod 0644 ${HOME_DIR}/.local/share/mkcert/rootCA.pem && \
+    chmod 0400 ${HOME_DIR}/.local/share/mkcert/rootCA-key.pem
+USER ${USER_NAME}
+RUN mkcert -install
 USER root
 
 # Trust github.com inside the machine so `git clone git@github.com:...`
