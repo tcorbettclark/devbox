@@ -127,7 +127,7 @@ function _devbox_create
     echo "Creating machine '$name' from '$DEVBOX_IMAGE' with --home-mount=none..."
     # --home-mount=none is the safety boundary: never mount the host home dir.
     # `container machine create` boots the machine by default.
-    container machine create --home-mount=none --name $name $DEVBOX_IMAGE
+    container machine create --home-mount=none --name $name $DEVBOX_IMAGE >/dev/null
     and echo "Machine '$name' is up."
 end
 
@@ -143,7 +143,7 @@ end
 function _devbox_stop
     set -l name $argv[1]
     _devbox_require_name stop $name; or return
-    container machine stop $name
+    container machine stop $name >/dev/null
     and echo "Machine '$name' stopped."
 end
 
@@ -182,8 +182,9 @@ function _devbox_destroy
         echo "Aborted."
         return
     end
-    container machine stop $name 2>/dev/null # ignore error if not running
-    container machine delete $name
+    # Suppress the bare-name stdout echo; keep stderr (real errors) visible.
+    container machine stop $name >/dev/null
+    container machine delete $name >/dev/null
 
     _delete_ssh_config $name
 end
