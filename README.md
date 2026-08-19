@@ -51,18 +51,6 @@ Subcommands:
   help                         this message
 ```
 
-## Configuration
-
-Defaults can be overridden via environment variables:
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `DEVBOX_IMAGE` | `devbox:latest` | Container image tag |
-| `DEVBOX_TARGET` | `devbox` | Build target |
-| `DEVBOX_DNS_DOMAIN` | `machine` | DNS domain for `<name>.<domain>` hostnames |
-| `DEVBOX_SSH_KEY` | `$HOME/.ssh/id_ed25519` | SSH key for agent forwarding |
-| `DEVBOX_USER` | `$USER` | Login user inside the machine |
-
 ## Requirements
 
 - macOS with Apple Containers (`container` CLI / Container framework)

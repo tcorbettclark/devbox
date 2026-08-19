@@ -1,12 +1,12 @@
 #!/usr/bin/env fish
 
-# ── defaults ────────────────────────────────────────────────────────────────
+# ── configuration (hardcoded) ─────────────────────────────────────────────
 set -g _devbox_dir (realpath (dirname (status --current-filename)))
-set -gx DEVBOX_IMAGE          (set -q DEVBOX_IMAGE;          and echo $DEVBOX_IMAGE;          or echo devbox:latest)
-set -gx DEVBOX_TARGET         (set -q DEVBOX_TARGET;         and echo $DEVBOX_TARGET;         or echo devbox)
-set -gx DEVBOX_DNS_DOMAIN     (set -q DEVBOX_DNS_DOMAIN;     and echo $DEVBOX_DNS_DOMAIN;     or echo machine)
-set -gx DEVBOX_SSH_KEY        (set -q DEVBOX_SSH_KEY;        and echo $DEVBOX_SSH_KEY;        or echo "$HOME/.ssh/id_ed25519")
-set -gx DEVBOX_USER           (set -q DEVBOX_USER;           and echo $DEVBOX_USER;           or echo $USER)
+set -g DEVBOX_IMAGE          devbox:latest
+set -g DEVBOX_TARGET         devbox
+set -g DEVBOX_DNS_DOMAIN     machine
+set -g DEVBOX_SSH_KEY        "$HOME/.ssh/id_ed25519"
+set -g DEVBOX_USER           $USER
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 function _devbox_usage
