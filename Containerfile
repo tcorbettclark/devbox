@@ -105,26 +105,29 @@ COPY --chown=${USER_NAME}:${USER_NAME} ./authorized_keys ${HOME_DIR}/.ssh/author
 RUN chmod 700 ${HOME_DIR}/.ssh && \
     chmod 600 ${HOME_DIR}/.ssh/authorized_keys
 
-# /etc/machine/create-user.sh: Apple runs this once, as root, on first boot
-# (CONTAINER_USER/UID/GID/HOME set). Its mere presence suppresses Apple's
-# built-in default, which would re-create the user under the host UID and
-# clobber/re-chown the baked home. With a single build==create user and
-# --home-mount=none, the baked user/home/configs persist, so nothing needs
-# provisioning — just keep sudo + no-password intact.
-RUN mkdir -p /etc/machine && \
-    DEFAULT_USER="${USER_NAME}" && \
-    printf '%s\n' \
-    '#!/bin/sh' \
-    'set -eu' \
-    "USER_=\"\${CONTAINER_USER:-$DEFAULT_USER}\"" \
-    '# User, home, toolchains, and configs are baked at build time and persist' \
-    '# (home-mount=none). This script only suppresses the built-in default,' \
-    '# which would re-create the user under the host UID and clobber the home.' \
-    'echo "$USER_ ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/"$USER_"' \
-    'chmod 0440 /etc/sudoers.d/"$USER_"' \
-    'passwd -d "$USER_" 2>/dev/null || true' \
-    > /etc/machine/create-user.sh && \
-    chmod 0755 /etc/machine/create-user.sh
+# /etc/machine/create-user.sh: Apple runs this once, as root, on first boot.
+# Its mere presence suppresses Apple's built-in default, which would re-create
+# the user under the host UID and clobber/re-chown the baked home. With a single
+# build==create user and --home-mount=none, the baked user/home/configs
+# persist, so nothing needs provisioning — just keep sudo + no-password intact.
+# We ignore Apple's CONTAINER_* env vars and bake the literal $USER_NAME into
+# the script at build time (via an unquoted inner heredoc), so there's no
+# runtime env dependency when Apple runs this in its provisioning context.
+RUN <<'OUTER'
+set -eu
+mkdir -p /etc/machine
+cat > /etc/machine/create-user.sh <<INNER
+#!/bin/sh
+set -eu
+# User, home, toolchains, and configs are baked at build time and persist
+# (home-mount=none). This script only suppresses the built-in default, which
+# would re-create the user under the host UID and clobber the home.
+echo "$USER_NAME ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/"$USER_NAME"
+chmod 0440 /etc/sudoers.d/"$USER_NAME"
+passwd -d "$USER_NAME" 2>/dev/null || true
+INNER
+chmod 0755 /etc/machine/create-user.sh
+OUTER
 
 # starship prompt (system-wide binary; fish sources it via config.fish).
 RUN curl -sS https://starship.rs/install.sh | sh -s -- -y
