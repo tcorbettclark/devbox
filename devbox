@@ -1,14 +1,12 @@
 #!/usr/bin/env fish
-#
-# devbox.fish — manage Apple `container` development machines.
-#
+
 # ── defaults ────────────────────────────────────────────────────────────────
 set -g _devbox_dir (realpath (dirname (status --current-filename)))
 set -gx DEVBOX_IMAGE          (set -q DEVBOX_IMAGE;          and echo $DEVBOX_IMAGE;          or echo dev:latest)
 set -gx DEVBOX_TARGET         (set -q DEVBOX_TARGET;         and echo $DEVBOX_TARGET;         or echo dev)
 set -gx DEVBOX_DNS_DOMAIN     (set -q DEVBOX_DNS_DOMAIN;     and echo $DEVBOX_DNS_DOMAIN;     or echo machine)
 set -gx DEVBOX_SSH_KEY        (set -q DEVBOX_SSH_KEY;        and echo $DEVBOX_SSH_KEY;        or echo "$HOME/.ssh/id_ed25519")
-set -gx DEVBOX_USER           (set -q DEVBOX_USER;           and echo $DEVBOX_USER;           or echo tcorbettclark)
+set -gx DEVBOX_USER           (set -q DEVBOX_USER;           and echo $DEVBOX_USER;           or echo $USER)
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 function _devbox_usage
@@ -48,7 +46,7 @@ function _setup_dns
     end
 end
 
-function _setup_ssh
+function _create_ssh_config
     set -l name $argv[1]
     set -l host $name.$DEVBOX_DNS_DOMAIN
     set -l cfgdir $HOME/.ssh/config.d
@@ -106,7 +104,7 @@ function _devbox_create
     _devbox_require_name create $name; or return
 
     _setup_dns $name
-    _setup_ssh $name
+    _create_ssh_config $name
 
     echo "Creating machine '$name' from '$DEVBOX_IMAGE' with --home-mount=none..."
     # --home-mount=none is the safety boundary: never mount the host home dir.
@@ -134,8 +132,6 @@ end
 function _devbox_ssh
     set -l name $argv[1]
     _devbox_require_name ssh $name; or return
-    # `exec` replaces this fish process with ssh; agent forwarding comes from the
-    # ~/.ssh/config block added by `devbox setup`.
     exec ssh $name.$DEVBOX_DNS_DOMAIN
 end
 
