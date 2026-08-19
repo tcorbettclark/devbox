@@ -8,7 +8,7 @@ machines, and SSH into them — all through a small `devbox` helper script.
 - **Debian stable-slim** base with **systemd** as PID 1
 - **fish** login shell, **starship** prompt, **passwordless sudo**
 - CLI tooling: `git`, `gh`, `ripgrep`, `fd`, `fzf`, `jq`, `bat`, `eza`, `sqlite3`
-- Language toolchains for the default user (`tcorbettclark`):
+- Language toolchains:
   - **uv** (Python; installs to `~/.local/bin`)
   - **Node.js** latest LTS with **npm**/**npx**/**corepack** (installed to `~/.local`,
     npm global prefix `~/.local`)
