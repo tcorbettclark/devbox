@@ -24,6 +24,7 @@ function _devbox_usage
     echo "  inspect <name>               inspect a machine"
     echo "  list                         list all machines"
     echo "  destroy <name>               stop + delete (y/N confirm)"
+    echo "  git-clone <name> <repo>      clone git@github.com:$USER/<repo>.git into <name>.machine"
     echo "  help                         this message"
 end
 
@@ -171,6 +172,23 @@ function _devbox_list
     container machine list
 end
 
+function _devbox_git_clone
+    set -l name $argv[1]
+    _devbox_require_name git-clone $name; or return
+    set -l repo $argv[2]
+    if test -z "$repo"
+        echo "Error: 'git-clone' requires a repo name." >&2
+        echo "Usage: devbox git-clone <name> <repo>" >&2
+        return 1
+    end
+    # Clone one of the current user's GitHub repos by name into the named
+    # machine over SSH. The forwarded agent (ForwardAgent yes in the ssh
+    # config) authorises pushes from inside the machine.
+    set -l url git@github.com:$DEVBOX_USER/$repo.git
+    echo "Cloning $url into '$name'..."
+    ssh $name.$DEVBOX_DNS_DOMAIN "git clone $url"
+end
+
 function _devbox_destroy
     set -l name $argv[1]
     _devbox_require_name destroy $name; or return
@@ -202,6 +220,7 @@ switch $cmd
     case run      ; _devbox_run $argv
     case inspect  ; _devbox_inspect $argv
     case list     ; _devbox_list $argv
+    case git-clone; _devbox_git_clone $argv
     case destroy  ; _devbox_destroy $argv
     case help -h --help '' ; _devbox_usage
     case '*'

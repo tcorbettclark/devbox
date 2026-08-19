@@ -143,6 +143,12 @@ USER ${USER_NAME}
 RUN brew install mkcert && mkcert -install
 USER root
 
+# Trust github.com inside the machine so `git clone git@github.com:...`
+# (and pushes via the forwarded agent) work without an interactive host-key
+# prompt. System-wide known_hosts is read by every user's ssh client.
+RUN mkdir -p /etc/ssh && \
+    ssh-keyscan -t ed25519,ecdsa,rsa github.com >> /etc/ssh/ssh_known_hosts
+
 # starship prompt (system-wide binary; fish sources it via config.fish).
 RUN curl -sS https://starship.rs/install.sh | sh -s -- -y
 

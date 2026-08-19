@@ -46,6 +46,7 @@ Subcommands:
   inspect <name>               inspect a machine
   list                         list all machines
   destroy <name>               stop + delete (y/N confirm)
+  git-clone <name> <repo>      clone git@github.com:$USER/<repo>.git into <name>.machine
   help                         this message
 ```
 
