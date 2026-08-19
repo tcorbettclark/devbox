@@ -7,6 +7,7 @@ set -g DEVBOX_TARGET         devbox
 set -g DEVBOX_DNS_DOMAIN     machine
 set -g DEVBOX_SSH_KEY        "$HOME/.ssh/id_ed25519"
 set -g DEVBOX_USER           $USER
+set -g DEVBOX_DOTFILES_REPO  $USER/dotfiles
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 function _devbox_usage
@@ -82,6 +83,15 @@ function _devbox_build
         return 1
     end
 
+    # Git identity for the baked .gitconfig — read from the current user's git
+    # config so nothing is hardcoded in the image.
+    set -l git_name  (git config user.name)
+    set -l git_email (git config user.email)
+    if test -z "$git_name" -o -z "$git_email"
+        echo "Error: git user.name/user.email not set (run `git config --global`)." >&2
+        return 1
+    end
+
     echo "Copying $pubkey → $_devbox_dir/authorized_keys"
     cp $pubkey $_devbox_dir/authorized_keys
     or return
@@ -92,6 +102,14 @@ function _devbox_build
         set -a build_args --no-cache
         set cache_note " (no cache; rebuilds every layer)"
     end
+
+    # Forward the current user's identity into the build (required; the
+    # Containerfile has no defaults and fails fast if any are missing).
+    set -a build_args \
+        --build-arg USER_NAME=$DEVBOX_USER \
+        --build-arg GIT_NAME=$git_name \
+        --build-arg GIT_EMAIL=$git_email \
+        --build-arg DOTFILES_REPO=$DEVBOX_DOTFILES_REPO
 
     echo "Building target '$DEVBOX_TARGET' → tag '$DEVBOX_IMAGE'$cache_note..."
     cd $_devbox_dir

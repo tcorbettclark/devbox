@@ -1,8 +1,9 @@
 #syntax=docker/dockerfile:1
 #
-# Build:
-#   cp ~/.ssh/id_ed25519.pub ./authorized_keys     # your PUBLIC key (not secret)
-#   container build --target devbox -t devbox:latest .
+# Build (the devbox wrapper reads your username, git identity, and dotfiles
+# repo from the current user and forwards them as build-args; the Containerfile
+# has no defaults and fails fast without them):
+#   devbox build
 #
 # Create + run a machine:
 #   sudo container system dns create machine       # once; enables <name>.machine
@@ -14,11 +15,31 @@
 # ── base ─────────────────────────────────────────────────────────────────────
 FROM debian:stable-slim AS base
 
+# Required build-args (no defaults; the guard below fails fast if any are
+# missing). The `devbox` wrapper supplies them from the current user:
+# USER_NAME=whoami, GIT_NAME/GIT_EMAIL from `git config`, DOTFILES_REPO=<user>/dotfiles.
+ARG USER_NAME
+ARG GIT_NAME
+ARG GIT_EMAIL
+ARG DOTFILES_REPO
+
+# Fail fast with a clear message if any required build-arg is missing (e.g. a
+# bare `container build .` without the devbox wrapper).
+RUN : "${USER_NAME:?USER_NAME build-arg required}" && \
+    : "${GIT_NAME:?GIT_NAME build-arg required}" && \
+    : "${GIT_EMAIL:?GIT_EMAIL build-arg required}" && \
+    : "${DOTFILES_REPO:?DOTFILES_REPO build-arg required}"
+
+# Promote to ENV so they survive into the programming/llm/devbox stages (ARGs
+# are stage-scoped; ENVs inherit across FROM ... AS <child>).
+ENV USER_NAME=${USER_NAME}
+ENV HOME_DIR=/home/${USER_NAME}
+
 ENV container=container
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 # User-local bins on PATH for non-fish contexts and for RUN steps below.
-ENV PATH=/home/tcorbettclark/.local/bin:/home/tcorbettclark/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV PATH=${HOME_DIR}/.local/bin:${HOME_DIR}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # System packages: systemd + ssh + fish + apt-available CLI tools.
 # starship is installed below from its official installer (Debian lags on it).
@@ -52,59 +73,60 @@ RUN systemctl set-default multi-user.target && \
       systemd-tmpfiles-setup.service \
       console-getty.service
 
-# Non-root user: tcorbettclark (UID 1000), fish login shell, passwordless sudo.
-# Toolchains (uv/bun) install into this home during build, so the user must
-# exist here. /etc/machine/create-user.sh (below) keeps this setup intact across
-# the machine's first-boot provisioning.
-RUN useradd -m -u 1000 -s /usr/bin/fish tcorbettclark && \
-    passwd -d tcorbettclark && \
-    echo 'tcorbettclark ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/tcorbettclark && \
-    chmod 0440 /etc/sudoers.d/tcorbettclark
+# Non-root user (UID 1000), fish login shell, passwordless sudo. Toolchains
+# (uv/bun) install into this home during build, so the user must exist here.
+# /etc/machine/create-user.sh (below) keeps this setup intact across the
+# machine's first-boot provisioning.
+RUN useradd -m -u 1000 -s /usr/bin/fish ${USER_NAME} && \
+    passwd -d ${USER_NAME} && \
+    echo "${USER_NAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USER_NAME} && \
+    chmod 0440 /etc/sudoers.d/${USER_NAME}
 
 # Baked git identity (you're the only user; safe to bake).
-RUN printf '[user]\n\tname = Timothy Corbett-Clark\n\temail = timothy@corbettclark.com\n[init]\n\tdefaultBranch = main\n' \
-        > /home/tcorbettclark/.gitconfig && \
-    chown tcorbettclark:tcorbettclark /home/tcorbettclark/.gitconfig
+RUN printf '[user]\n\tname = %s\n\temail = %s\n[init]\n\tdefaultBranch = main\n' "${GIT_NAME}" "${GIT_EMAIL}" \
+        > ${HOME_DIR}/.gitconfig && \
+    chown ${USER_NAME}:${USER_NAME} ${HOME_DIR}/.gitconfig
 
 # Dotfiles (fish config + functions, ghostty, zed) are managed by chezmoi from
-# github.com/tcorbettclark/dotfiles. chezmoi isn't in Debian stable (only sid),
-# so use the official installer instead of adding sid sources. It drops the
-# binary in ~/.local/bin (already on PATH) and runs `init --apply` in one shot.
-# The repo is PUBLIC, so the HTTPS clone works at build time without the
-# forwarded SSH agent. Re-init over SSH post-boot if you want `chezmoi update`
-# to use the agent (git@github.com:tcorbettclark/dotfiles.git).
-USER tcorbettclark
-RUN sh -c "$(curl -fsLS https://get.chezmoi.io)" -- -b "$HOME/.local/bin" init --apply tcorbettclark/dotfiles
+# $DOTFILES_REPO (passed as a build-arg, e.g. <user>/dotfiles). chezmoi isn't in
+# Debian stable (only sid), so use the official installer instead of adding sid
+# sources. It drops the binary in ~/.local/bin (already on PATH) and runs
+# `init --apply` in one shot. The repo is PUBLIC, so the HTTPS clone works at
+# build time without the forwarded SSH agent. Re-init over SSH post-boot if you
+# want `chezmoi update` to use the agent (git@github.com:$DOTFILES_REPO.git).
+USER ${USER_NAME}
+RUN sh -c "$(curl -fsLS https://get.chezmoi.io)" -- -b "$HOME/.local/bin" init --apply ${DOTFILES_REPO}
 USER root
 
 # Authorize the host's SSH key to log in to the machine. This is the PUBLIC
 # key only (not secret), dropped into the build context as ./authorized_keys
 # (e.g. `cp ~/.ssh/id_ed25519.pub ./authorized_keys`) before building.
-COPY --chown=tcorbettclark:tcorbettclark ./authorized_keys /home/tcorbettclark/.ssh/authorized_keys
-RUN chmod 700 /home/tcorbettclark/.ssh && \
-    chmod 600 /home/tcorbettclark/.ssh/authorized_keys
+COPY --chown=${USER_NAME}:${USER_NAME} ./authorized_keys ${HOME_DIR}/.ssh/authorized_keys
+RUN chmod 700 ${HOME_DIR}/.ssh && \
+    chmod 600 ${HOME_DIR}/.ssh/authorized_keys
 
 # Stage the same configs under /etc/skel-dev so /etc/machine/create-user.sh can
 # repair them idempotently (cp -an, no clobber) if the machine re-provisions
-# the user on first boot. Toolchain dirs (~/.local, ~/.bun) are NOT
-# staged — they're already baked into /home/tcorbettclark.
+# the user on first boot. Toolchain dirs (~/.local, ~/.bun) are NOT staged —
+# they're already baked into the image.
 # NOTE: dotfiles (~/.config/fish, ~/.config/zed, ~/.config/ghostty) are NOT
 # staged here — chezmoi owns them and applied them at build time for the baked
 # user. Only the non-dotfile configs (git identity, ssh pubkey) are staged as a
 # repair fallback for /etc/machine/create-user.sh.
 RUN mkdir -p /etc/skel-dev/.ssh && \
-    cp /home/tcorbettclark/.gitconfig /etc/skel-dev/.gitconfig && \
-    cp /home/tcorbettclark/.ssh/authorized_keys /etc/skel-dev/.ssh/authorized_keys
+    cp ${HOME_DIR}/.gitconfig /etc/skel-dev/.gitconfig && \
+    cp ${HOME_DIR}/.ssh/authorized_keys /etc/skel-dev/.ssh/authorized_keys
 
 # /etc/machine/create-user.sh: Apple runs this once, as root, on first boot,
 # with CONTAINER_USER/UID/GID/HOME/MACHINE_ID set. Replaces the built-in user
 # provisioning. Idempotent: if the baked user already exists, just ensure the
 # configs are present (no clobber) and ownership is correct.
 RUN mkdir -p /etc/machine && \
+    DEFAULT_USER="${USER_NAME}" && \
     printf '%s\n' \
     '#!/bin/sh' \
     'set -eu' \
-    'USER_="${CONTAINER_USER:-tcorbettclark}"' \
+    "USER_=\"\${CONTAINER_USER:-$DEFAULT_USER}\"" \
     '# User + home + toolchains are baked into the image. If the machine' \
     '# provisioned a different UID, keep the baked user as-is (home-mount is' \
     '# none, so UID matching the host is irrelevant).' \
@@ -144,8 +166,8 @@ CMD ["/sbin/init"]
 # ── programming ──────────────────────────────────────────────────────────
 FROM base AS programming
 
-USER tcorbettclark
-WORKDIR /home/tcorbettclark
+USER ${USER_NAME}
+WORKDIR ${HOME_DIR}
 
 # uv installs to ~/.local/bin and manages its own Python interpreters.
 # No apt python3; uv fetches whatever Python a project needs.
@@ -168,8 +190,8 @@ RUN mkdir -p ~/.local && \
 # ── llm ──────────────────────────────────
 FROM programming AS llm
 
-USER tcorbettclark
-WORKDIR /home/tcorbettclark
+USER ${USER_NAME}
+WORKDIR ${HOME_DIR}
 
 # pi (the coding agent). Installed globally via npm; its prefix is ~/.local
 # (set up in the typescript stage), so `pi` lands in ~/.local/bin (already on

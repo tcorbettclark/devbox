@@ -54,7 +54,10 @@ Subcommands:
 ## Requirements
 
 - macOS with Apple Containers (`container` CLI / Container framework)
-- An SSH keypair; the public key goes in `./authorized_keys`
+- An SSH keypair; the public key goes in `./authorized_keys` (refreshed by `devbox build`)
+- A git identity (`user.name` / `user.email`); `devbox build` reads it from your
+  git config and bakes it into the image, along with your username and dotfiles
+  repo (`$USER/dotfiles`)
 
 ## License
 
